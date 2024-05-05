@@ -1,5 +1,9 @@
 ﻿using Autodesk.AutoCAD.Runtime;
 
+/// ObjectOverrule.cs  ActivistInvestor / Tony T.
+/// 
+/// Source: https://github.com/ActivistInvestor/Overrules/blob/main/ObjectOverrule.cs
+
 namespace Autodesk.AutoCAD.DatabaseServices
 {
    /// <summary>
