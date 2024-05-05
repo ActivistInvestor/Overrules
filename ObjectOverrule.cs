@@ -49,9 +49,9 @@ namespace Autodesk.AutoCAD.DatabaseServices
             {
                this.enabled = value;
                if( value )
-                  Overrule.AddOverrule( rxclass, this, true );
+                  AddOverrule( rxclass, this, true );
                else
-                  Overrule.RemoveOverrule( rxclass, this );
+                  RemoveOverrule( rxclass, this );
                OnEnabledChanged( this.enabled );
             }
          }
