@@ -13,7 +13,7 @@ using Autodesk.AutoCAD.Runtime;
 /// 
 /// Distributed under terms of the MIT license.
 
-namespace AcMgdLib.DatabaseServices.Extensions
+namespace AcMgdLib.DatabaseServices.Examples
 {
 
    /// <summary>
