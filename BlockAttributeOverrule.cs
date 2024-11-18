@@ -4,8 +4,11 @@ using System.Collections.Generic;
 using System.Text.RegularExpressions;
 using Autodesk.AutoCAD.ApplicationServices;
 using Autodesk.AutoCAD.DatabaseServices;
+using Autodesk.AutoCAD.Diagnostics.Extensions;
 using Autodesk.AutoCAD.Internal;
 using Autodesk.AutoCAD.Runtime;
+
+#pragma warning disable CS0618 // Type or member is obsolete
 
 /// BlockAttributeOverrule.cs
 /// 
@@ -13,99 +16,21 @@ using Autodesk.AutoCAD.Runtime;
 /// 
 /// Distributed under terms of the MIT license.
 
-namespace AcMgdLib.DatabaseServices.Examples
+namespace AcMgdLib.DatabaseServices
 {
-
-   /// <summary>
-   /// An example showing the use of the BlockAttributeOverrule 
-   /// base type.
-   /// 
-   /// This example class will autonomously update attributes 
-   /// of a specified block to display the X and Y ordinates of 
-   /// the owning BlockReference's insertion point.
-   /// 
-   /// The example targets a block named "TESTBLOCK", 
-   /// having 2 attributes with the tags "X" and "Y".
-   /// 
-   /// The overrule functionality is enabled by issuing
-   /// the BLOCKOVERRULE command.
-   /// 
-   /// Once the overrule is enabled, and there are one or more
-   /// insertions of the TESTBLOCK in the current document, try
-   /// doing any of the following and note that the attributes
-   /// will _always_ display the X and Y of the block insertion
-   /// point:
-   /// 
-   ///     MOVE command
-   ///     STRETCH command
-   ///     GRIP_MOVE/STRETCH commands
-   ///     COPY command
-   ///     INSERT command (yes, it updates newly-inserted blocks)
-   ///     CUT/COPYCLIP and PASTECLIP commands
-   ///     PROPERTIES Palette (any property change).
-   ///     
-   /// </summary>
-
-   public class MyBlockAttributeOverrule : BlockAttributeOverrule
-   {
-      static MyBlockAttributeOverrule instance = null;
-
-      /// <summary>
-      /// The block name parameter is a wildcard that can be
-      /// used to specify multiple block names using standard
-      /// AutoCAD-style wildcard matching.
-      /// </summary>
-
-
-      public MyBlockAttributeOverrule()
-         : base(true, "TESTBLOCK", "X", "Y")
-      {
-      }
-
-      /// <summary>
-      /// The resuable functionality in the base types
-      /// allow the operation to be done with 2 lines
-      /// of code.
-      /// </summary>
-
-      protected override void UpdateAttribute(AttributeReference att, BlockReference owner)
-      {
-         var dim = att.Tag == "X" ? owner.Position.X : owner.Position.Y;
-         att.TextString = $"{att.Tag}: {dim:0.00}";
-      }
-
-      /// <summary>
-      /// A command to enable/disable the overrule:
-      /// </summary>
-      
-      [CommandMethod("BLOCKOVERRULE")]
-      public static void StartStop()
-      {
-         if(instance == null)
-            instance = new MyBlockAttributeOverrule();
-         else
-         {
-            instance.Dispose();
-            instance = null;
-         }
-      }
-   }
-
-   /// The above class is an _Example_. Everything that follows
-   /// is reusable code that shouldn't require changes, as all
-   /// specifics of/parameters for the operation are encapsulated
-   /// in the UpdateAttribute() override in the above class.
 
    public abstract class BlockAttributeOverrule : ObjectOverrule<BlockReference>
    {
       string pattern;
-      static Dictionary<ObjectId, bool> blocks
-         = new Dictionary<ObjectId, bool>();
+      Dictionary<ObjectId, bool> map;
       HashSet<string> tags;
+      bool noTags = false;
 
       /// <summary>
+      /// Constructor
+      /// 
       /// Specify a wildcard pattern matching the names of
-      /// one or more blocks and one or more strings that
+      /// one or more blocks, and zero or more strings that
       /// identify the Tags of the attributes to be operated
       /// on. If no tag strings are supplied, all attributes
       /// are operated on.
@@ -117,91 +42,202 @@ namespace AcMgdLib.DatabaseServices.Examples
          if(string.IsNullOrWhiteSpace(blockName))
             throw new ArgumentNullException("No block name specified");
          this.pattern = blockName;
-         if(tags.Length > 0)
+         noTags = tags.Length == 0;
+         if(!noTags)
             this.tags = new HashSet<string>(tags, StringComparer.OrdinalIgnoreCase);
       }
 
+      protected override void OnOverruling()
+      {
+         map = new Dictionary<ObjectId, bool>();
+         base.OnOverruling();
+      }
+
+      /// <summary>
+      /// Because there is a minor issue with newly-inserted blocks
+      /// when the ATTDIA sysvar is 0, this can be set to false to
+      /// disable acting on newly-inserted block references created
+      /// by the -INSERT command.
+      /// 
+      /// The default value is false. Note that this property only 
+      /// controls how the overrule behaves with the -INSERT command. 
+      /// New block references created via other means including OLE 
+      /// drag & drop, PASTECLIP, COPY, etc. are always acted on.
+      /// </summary>
+
+      public bool InsertEnabled { get;set; }
+
       /// <summary>
       /// This class is abstract and is designed to be reusable.
-      /// That is achieved by deriving a class from this class
-      /// and doing little more than overriding this method:
+      /// It should require no changes (other than bug fixes or
+      /// enhancements). 
+      /// 
+      /// Reusing this class is achieved by deriving a class from 
+      /// it and overriding the Update() method. Within an override 
+      /// of Update(), the AttributeReference and the BlockReference 
+      /// arguments are open for write and can be modified. Overrides 
+      /// of this method can modify either argument, but shouldn't 
+      /// call methods that alter the open state of either argument, 
+      /// such as Close() or Cancel().
+      /// 
+      /// If other objects must be accessed from an override of
+      /// this method, those objects should only be accessed using 
+      /// an OpenCloseTransaction. Do not under any circumstances
+      /// call the TransactionManager's StartTransaction() method
+      /// from an override of this method.
       /// </summary>
       /// <param name="att">The AttributeReference to be operated on</param>
       /// <param name="owner">The owning BlockReference</param>
 
-      protected virtual void UpdateAttribute(AttributeReference att, BlockReference owner)
+      protected virtual void Update(AttributeReference att, BlockReference owner)
       {
       }
 
+      /// <summary>
+      /// A derived type can override this to provide
+      /// more granular filtering of block references,
+      /// but should in almost all cases, supermessage
+      /// this and logically-operate on its result:
+      /// </summary>
+      /// <param name="br"></param>
+      /// <returns>A value indicating if the given 
+      /// BlockReference and its attributes should be 
+      /// operated on.</returns>
+      
       protected virtual bool IsMatch(BlockReference br)
       {
-         /// Cache the ObjectIds and match result of all
-         /// BlockTableRecords, which allows subsequent 
+         /// Cache the ObjectIds and match result of each
+         /// BlockTableRecord, which allows subsequent 
          /// match queries to be reduced to nothing but 
-         /// a dictionary lookup. Note that this cache is
-         /// Database-agnostic, and will store ObjectIds
-         /// from multiple Databases:
+         /// a dictionary lookup. This cache is Database-
+         /// agnostic, and stores ObjectIds from multiple 
+         /// Databases:
 
          var btrId = br.DynamicBlockTableRecord;
-         if(!blocks.TryGetValue(btrId, out bool result))
+         if(!map.TryGetValue(btrId, out bool result))
          {
-            string name = GetEffectiveName(br);
-            result = blocks[btrId] = name.Matches(pattern);
+            using(var btr = (BlockTableRecord) btrId.Open(OpenMode.ForRead))
+            {
+               result = map[btrId] = IsMatch(btr);
+            }
          }
          return result;
       }
 
-      static string GetEffectiveName(BlockReference br)
+      /// <summary>
+      /// Allows derived types to qualify/disqualify
+      /// block references using criteria derived from
+      /// the block reference's definition. For Dynamic
+      /// block references, the dynamic block's defining
+      /// BlockTableRecord is passed in as the argument, 
+      /// rather than the anonymous block definition.
+      /// 
+      /// The result is cached and therefore, this method 
+      /// is called only once for each BlockTableRecord,
+      /// and its result is used for subsequent references 
+      /// to the same block definition.
+      /// 
+      /// The default criteria is to disqualify blocks
+      /// having no attributes, and match the name of
+      /// the BlockTableRecord against the pattern that
+      /// was supplied to the constructor, without case-
+      /// sensitivity. For dynamic blocks, the name of 
+      /// the dynamic block's defining BlockTableRecord
+      /// is compared, rather than that of an anonymous
+      /// BlockTableRecord.
+      /// </summary>
+      /// <param name="btr">The referenced BlockTableRecord</param>
+      /// <returns>A value indicating if references to the
+      /// BlockTableRecord should be operated on</returns>
+      
+      protected virtual bool IsMatch(BlockTableRecord btr)
       {
-         if(!br.IsDynamicBlock)
-            return br.Name;
-         var btrId = br.DynamicBlockTableRecord;
-         using(var btr = (BlockTableRecord)btrId.GetObject(OpenMode.ForRead))
-         {
-            return btr.Name;
-         }
+         return btr.HasAttributeDefinitions
+            && btr.Name.Matches(pattern);
       }
 
       public sealed override void Close(DBObject obj)
       {
          try
          {
-            if(obj.IsWriteEnabled && obj.IsReallyClosing && !obj.IsUndoing
-                  && !obj.IsErased && !obj.IsNewObject)
+            if(obj.IsWriteEnabled
+               && obj.IsReallyClosing
+               && (InsertEnabled || AppUtils.ActiveCommand != "-INSERT")
+               && !DBObject.IsCustomObject(obj.ObjectId)
+               && !obj.Database.AutoDelete 
+               && !obj.IsUndoing
+               && !obj.IsErased
+               && obj is BlockReference blkref
+               && IsMatch(blkref))
             {
-               BlockReference br = obj as BlockReference;
-               if(IsMatch(br))
+               var dbtrans = blkref.Database.TransactionManager.TopTransaction;
+               bool local = dbtrans == null;
+               var tr = dbtrans ?? new OpenCloseTransaction();
+               try
                {
-                  using(var tr = new OpenCloseTransaction())
+                  foreach(ObjectId id in blkref.AttributeCollection)
                   {
-                     foreach(ObjectId id in br.AttributeCollection)
+                     if(id.IsErased)
+                        continue;
+                     var attref = (AttributeReference)tr.GetObject(id, OpenMode.ForRead);
+                     if(noTags || tags.Contains(attref.Tag))
                      {
-                        var attref = (AttributeReference)tr.GetObject(id, OpenMode.ForRead);
-                        if(tags == null || tags.Contains(attref.Tag))
+                        tr.GetObject(id, OpenMode.ForWrite, false, true);
+                        try
                         {
-                           attref.UpgradeOpen();
-                           UpdateAttribute(attref, br);
+                           Update(attref, blkref);
+                        }
+                        catch(System.Exception ex)
+                        {
+                           IsOverruling = false;
+                           base.Close(obj);
+                           UnhandledExceptionFilter.CerOrShowExceptionDialog(ex);
+                           AppUtils.Write($"\nException in {GetType().Name}.Update(): overrule disabled.");
+                           return;
+                        }
+                        finally
+                        {
+                           attref.DowngradeOpen();
                         }
                      }
-                     tr.Commit();
                   }
+                  if(local)
+                     tr.Commit();
+               }
+               finally
+               {
+                  if(local)
+                     tr.Dispose();
                }
             }
          }
-         catch(System.Exception)
+         catch(Autodesk.AutoCAD.Runtime.Exception ex) 
          {
             // We will get here if a block is inserted,
-            // and ATTDIA == 0. In that case, the attributes
-            // are open for write and throw an exception 
-            // when attempting to open them.
+            // and ATTDIA == 0. In that case, the first
+            // attribute prompted for is open for write
+            // and throws an exception when attempting 
+            // to open it.
+            
+            AppUtils.Write($"\nFailed to update attribute (e{ex.ErrorStatus})");
+         }
+         catch(System.Exception ex)
+         {
+            // If we get here, there is another problem
+            // that is not expected, so the best course
+            // of action is to disable the overrule.
+            IsOverruling = false;
+            UnhandledExceptionFilter.CerOrShowExceptionDialog(ex);
+            AppUtils.Write($"\n{GetType().Name} disabled."); 
          }
          base.Close(obj);
       }
+
    }
 
    /// <summary>
-   /// An implementation of ObjectOverrule that automates 
-   /// adding/removing the overrule from a single target type, 
+   /// A generic specialization of ObjectOverrule that automates 
+   /// adding/removing the overrule from a single target type
    /// and removing the overrule when the instance is disposed.
    /// </summary>
    /// <typeparam name="T">The Type to be overruled.</typeparam>
@@ -211,10 +247,13 @@ namespace AcMgdLib.DatabaseServices.Examples
       bool enabled = false;
       static RXClass targetClass = RXObject.GetClass(typeof(T));
       bool isDisposing = false;
+      bool initializing = true;
+      bool initialized = false;
 
       public ObjectOverrule(bool enabled = true)
       {
          this.IsOverruling = enabled;
+         initializing = false;
       }
 
       /// <summary>
@@ -240,7 +279,14 @@ namespace AcMgdLib.DatabaseServices.Examples
             {
                this.enabled = value;
                if(value)
+               {
                   AddOverrule(targetClass, this, true);
+                  if(!initialized)
+                  {
+                     OnOverruling();
+                     initialized = true;
+                  }
+               }
                else
                   RemoveOverrule(targetClass, this);
                OnEnabledChanged(this.enabled);
@@ -248,9 +294,35 @@ namespace AcMgdLib.DatabaseServices.Examples
          }
       }
 
+      /// <summary>
+      /// Called the first time the overrule is enabled.
+      /// Derived types can use an override of this to
+      /// do lazy initialization. This is helpful in use
+      /// cases where the Overrule may never be enabled,
+      /// or may not be enabled until some conditions are
+      /// met. Derived types can defer allocations until
+      /// they are necessary.
+      /// </summary>
+      
+      protected virtual void OnOverruling()
+      {
+      }
+
       protected virtual void OnEnabledChanged(bool enabled)
       {
       }
+
+      /// <summary>
+      /// An override of OnEnabledChanged() can be called
+      /// before the containing type's constructor has been
+      /// called. This property will be true in that case.
+      /// 
+      /// Derived types can do lazy initialization from an
+      /// override of OnEnabledChanged() when this property
+      /// is true.
+      /// </summary>
+      
+      protected bool IsInitializing => initializing;
 
       protected bool IsDisposing => isDisposing;
 
@@ -279,4 +351,21 @@ namespace AcMgdLib.DatabaseServices.Examples
             return Utils.WcMatchEx(str, pattern, ignoreCase);
       }
    }
+
+   public static class AppUtils
+   {
+      public static void Write(string msg)
+      {
+         Application.DocumentManager.MdiActiveDocument?.
+            Editor.WriteMessage($"\n{msg}");
+      }
+
+      public static string ActiveCommand
+         => Application.DocumentManager.MdiActiveDocument?.CommandInProgress;
+
+      public static Database ActiveDatabase
+         => Application.DocumentManager.MdiActiveDocument?.Database;
+   }
+
+
 }
