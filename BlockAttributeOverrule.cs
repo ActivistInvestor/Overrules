@@ -4,7 +4,6 @@ using System.Collections.Generic;
 using System.Text.RegularExpressions;
 using Autodesk.AutoCAD.ApplicationServices;
 using Autodesk.AutoCAD.DatabaseServices;
-using Autodesk.AutoCAD.Diagnostics.Extensions;
 using Autodesk.AutoCAD.Internal;
 using Autodesk.AutoCAD.Runtime;
 
