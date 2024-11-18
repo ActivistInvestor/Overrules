@@ -1,5 +1,4 @@
 ﻿using Autodesk.AutoCAD.DatabaseServices;
-using Autodesk.AutoCAD.Diagnostics.Extensions;
 using Autodesk.AutoCAD.Runtime;
 
 /// HeadsUpAttributeOverrule.cs
