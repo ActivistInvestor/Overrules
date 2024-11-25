@@ -171,13 +171,15 @@ namespace AcMgdLib.DatabaseServices
          try
          {
             if(obj.IsWriteEnabled
+               && obj.IsModified
+               && !obj.IsUndoing
                && obj.IsReallyClosing
                && (InsertEnabled || AppUtils.ActiveCommand != "-INSERT")
                && !DBObject.IsCustomObject(obj.ObjectId)
                && !obj.Database.AutoDelete 
-               && !obj.IsUndoing
                && !obj.IsErased
                && obj is BlockReference blkref
+               && !(obj is Table)
                && IsMatch(blkref))
             {
                var dbtrans = blkref.Database.TransactionManager.TopTransaction;
